@@ -1,6 +1,6 @@
 # points2d_projection_mesh
 - Input
-  - 2D points (e.g. facial lamdmarks) on an image
+  - 2D points (e.g. facial landmarks) on an image
   - Camera parameters (extrinsic and intrinsic) of the image
   - Aligned 3D mesh to the image
 - Output
