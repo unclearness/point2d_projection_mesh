@@ -12,7 +12,7 @@
 |<img src="./data/detected.png" width="480">|<img src="./data/projected.gif" width="320">|
 
 ## Try it
-- Step 0: Check Original data in `./data/`
+- Step 0: Check original data in `./data/`
     - `max-planck.obj`: A head model of famous guy in physics and sometimes in CG. Gottten from [here](https://github.com/alecjacobson/common-3d-test-models/blob/master/data/max-planck.obj).
     - `max-planck_10k.obj`: A decimated version of the above original mesh. Used for testing with smaller mesh.
     - `rendered.png`: Rendered `max-planck.obj` by Blender.
