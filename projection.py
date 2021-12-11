@@ -3,7 +3,9 @@ import json
 import trimesh
 from typing import NamedTuple
 
-
+# A implementation of Möller-Trumbore algorithm
+# https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
+# https://pheema.hatenablog.jp/entry/ray-triangle-intersection#%E4%B8%89%E8%A7%92%E5%BD%A2%E3%81%AE%E5%86%85%E9%83%A8%E3%81%AB%E5%AD%98%E5%9C%A8%E3%81%99%E3%82%8B%E7%82%B9%E3%81%AE%E8%A1%A8%E7%8F%BE
 def intersect(origin, ray, v0, v1, v2, kEpsilon=1e-6):
     e1 = v1 - v0
     e2 = v2 - v0
@@ -167,7 +169,11 @@ def writeMeshAsPly(path, vertices, faces):
 
 def main():
     # Load mesh
-    mesh = trimesh.load('./data/max-planck_10k.obj')
+    # Decimated mesh
+    # mesh_path = './data/max-planck_10k.obj'
+    # Original mesh
+    mesh_path = './data/max-planck.obj'
+    mesh = trimesh.load(mesh_path)
 
     # Load camera param
     with open('./data/camera_param.json') as fp:

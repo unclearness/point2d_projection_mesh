@@ -11,12 +11,11 @@ input = input[..., :3]
 preds = fa.get_landmarks(input)
 
 input = np.array(input)
-print(input.shape)
+# Convert to BGR for cv2
 input = input[..., ::-1].astype(np.uint8).copy()
-print(input.shape, input.dtype)
 for p in preds[0]:
     p = (int(p[0]), int(p[1]))
-    cv2.circle(input, p, 1, [0, 0, 255], -1)
+    cv2.circle(input, p, 3, [0, 0, 255], -1)
 
 cv2.imwrite('data/detected.png', input)
 
