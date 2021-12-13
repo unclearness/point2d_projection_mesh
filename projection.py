@@ -1,9 +1,11 @@
-import numpy as np
 import json
+import multiprocessing
+import time
+import numpy as np
 import trimesh
-from typing import NamedTuple
 
-# A implementation of Möller-Trumbore algorithm
+
+# An implementation of Möller-Trumbore algorithm
 # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
 # https://pheema.hatenablog.jp/entry/ray-triangle-intersection#%E4%B8%89%E8%A7%92%E5%BD%A2%E3%81%AE%E5%86%85%E9%83%A8%E3%81%AB%E5%AD%98%E5%9C%A8%E3%81%99%E3%82%8B%E7%82%B9%E3%81%AE%E8%A1%A8%E7%8F%BE
 def intersect(origin, ray, v0, v1, v2, kEpsilon=1e-6):
@@ -45,33 +47,6 @@ def intersect(origin, ray, v0, v1, v2, kEpsilon=1e-6):
     return (t, u, v)
 
 
-# class InteresectResult:
-#     def __init__(self, t, u, v, fid, pos):
-#         self.t = t
-#         self.u = u
-#         self.v = v
-#         self.fid = fid
-#         self.pos = pos
-
-
-def json_serializable(cls):
-    def as_dict(self):
-        yield {name: value for name, value in zip(
-            self._fields,
-            iter(super(cls, self).__iter__()))}
-    cls.__iter__ = as_dict
-    return cls
-
-
-@json_serializable
-class InteresectResult(NamedTuple):
-    t: float
-    u: float
-    v: float
-    fid: int
-    pos: list
-
-
 def intersectMesh(origin, ray, verts, faces, kEpsilon=1e-6):
     results = []
     # TODO: Batch version
@@ -84,7 +59,7 @@ def intersectMesh(origin, ray, verts, faces, kEpsilon=1e-6):
             continue
         t, u, v = ret
         pos = origin + ray * t
-        result = InteresectResult(t, u, v, fid, pos.tolist())
+        result = {'t': t, 'u': u, 'v': v, 'fid': fid, 'pos': pos.tolist()}
         results.append(result)
     return results
 
@@ -109,19 +84,62 @@ def projectLandmarkToMesh(verts, faces, pos, fx, fy, cx, cy, c2w_R, c2w_t):
         return results[0]
     closest = results[0]
     for res in results[1:]:
-        if res.t < closest.t:
+        if res['t'] < closest['t']:
             closest = res
     return closest
 
 
-def projectLandmarksToMesh(verts, faces, landmarks,
-                           fx, fy, cx, cy, c2w_R, c2w_t):
-    projected_list = []
-    for lmk in landmarks:
-        closest = projectLandmarkToMesh(verts, faces, lmk, fx, fy, cx, cy,
+def projectLandmarkToMeshWorker(array, landmarks, start, end,
+                                verts, faces, fx, fy, cx, cy,
+                                c2w_R, c2w_t, verbose):
+    for index in range(start, end):
+        lmk = landmarks[index]
+        closest = projectLandmarkToMesh(verts, faces, lmk,
+                                        fx, fy, cx, cy,
                                         c2w_R, c2w_t)
-        print(lmk, closest)
-        projected_list.append(closest)
+        array[index] = closest
+        if verbose:
+            print(index, lmk, closest)
+
+
+def projectLandmarksToMesh(verts, faces, landmarks,
+                           fx, fy, cx, cy, c2w_R, c2w_t,
+                           verbose=True, num_process=-1):
+    projected_list = []
+
+    if num_process == 1:
+        for i, lmk in enumerate(landmarks):
+            closest = projectLandmarkToMesh(verts, faces, lmk, fx, fy, cx, cy,
+                                            c2w_R, c2w_t)
+            if verbose:
+                print(i, lmk, closest)
+            projected_list.append(closest)
+    else:
+        num_process = min(max(num_process, 1), multiprocessing.cpu_count())
+        num_data_per_process = int(np.ceil(len(landmarks) / num_process))
+        with multiprocessing.Manager() as manager:
+            array = manager.list([None] * len(landmarks))
+            processes = []
+            count = 0
+            for _ in range(num_process):
+                start = count
+                end = min(count + num_data_per_process, len(landmarks))
+                process = multiprocessing.Process(
+                    target=projectLandmarkToMeshWorker,
+                    args=[array, landmarks, start, end,
+                          verts, faces, fx, fy, cx, cy,
+                          c2w_R, c2w_t, verbose])
+                processes.append(process)
+                count = end
+
+            for p in processes:
+                p.start()
+
+            for p in processes:
+                p.join()
+
+            projected_list = list(array)
+
     return projected_list
 
 
@@ -199,14 +217,20 @@ def main():
             landmarks.append(pos)
     # print(landmarks)
 
+    num_process = multiprocessing.cpu_count()
+    start = time.time()
     projected_list = projectLandmarksToMesh(mesh.vertices, mesh.faces,
                                             landmarks,
-                                            fx, fy, cx, cy, c2w_R, c2w_t)
+                                            fx, fy, cx, cy, c2w_R, c2w_t,
+                                            num_process=num_process)
+    elapsed_time = time.time() - start
+    print("{0} processes, elapsed_time:{1}".format(
+        num_process, elapsed_time) + "[sec]")
 
     with open('intersections.json', 'w') as fp:
         json.dump(projected_list, fp, indent=4)
 
-    projected_pos_list = [x.pos for x in projected_list if x is not None]
+    projected_pos_list = [x['pos'] for x in projected_list if x is not None]
     writeMeshAsPly('projected.ply', projected_pos_list, [])
 
 
