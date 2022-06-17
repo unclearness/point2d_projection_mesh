@@ -80,15 +80,15 @@ def intersect(origin,  # [B, 3]
         t_ = t[i][indices[i]][:n]
         u_ = u[i][indices[i]][:n]
         v_ = v[i][indices[i]][:n]
-        fid = indices[i][: n]
+        fid = indices[i][:n]
 
         idx = np.argmin(t_)
 
         if standard_barycentric:
             # Convert from edge vector to triangle area ratio
-            w = 1 - u - v
-            v = u
-            u = w
+            w_ = 1 - u_ - v_
+            v_ = u_
+            u_ = w_
 
         pos = org_origin[i] + org_ray[i] * t_[idx]
         result = {'t': t_[idx], 'u': u_[idx], 'v': v_[
@@ -173,8 +173,15 @@ def intersectNaive(origin, ray, verts, faces, kEpsilon=1e-6,
     return results, all_info
 
 
-def intersectMesh(origin, ray, verts, faces, kEpsilon=1e-6, use_batch=True):
-    if use_batch:
+def intersectMesh(origin, ray, verts, faces, kEpsilon=1e-6, mode="batch_all"):
+    if mode == "batch_geom":
+        results = []
+        for i in range(len(origin)):
+            result = intersect(origin[i][None, ], ray[i]
+                               [None, ], verts, faces, kEpsilon)
+            results.append(result[0][0])
+        results = (results, None)
+    elif mode == "batch_all":
         results = intersect(origin, ray, verts, faces, kEpsilon)
     else:
         results = intersectNaive(origin, ray, verts, faces, kEpsilon)
