@@ -1,18 +1,20 @@
-import json
-import multiprocessing
-import time
 import numpy as np
-import trimesh
-
 
 # An implementation of Möller-Trumbore algorithm
 # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
 # https://pheema.hatenablog.jp/entry/ray-triangle-intersection#%E4%B8%89%E8%A7%92%E5%BD%A2%E3%81%AE%E5%86%85%E9%83%A8%E3%81%AB%E5%AD%98%E5%9C%A8%E3%81%99%E3%82%8B%E7%82%B9%E3%81%AE%E8%A1%A8%E7%8F%BE
+
+
 def intersect(origin,  # [B, 3]
               ray,  # [B, 3]
               verts,  # [V, 3]
               faces,  # [F, 3]
-              kEpsilon=1e-6, standard_barycentric=True):
+              kEpsilon=1e-6,
+              standard_barycentric=True,
+              vert_normals=None,  # [V, 3]
+              face_normals=None,  # [F, 3]
+              cull_th=np.pi
+              ):
 
     fetched = verts[faces]  # [F, 3, 3]
     v0 = fetched[:, 0]    # [F, 3]
@@ -66,6 +68,23 @@ def intersect(origin,  # [B, 3]
     N = F - invalid_mask.sum(axis=-1)
     t[invalid_mask] = np.inf
 
+    use_vert_normals = False
+    use_face_normals = False
+    if vert_normals is not None and verts.shape == vert_normals.shape:
+        use_vert_normals = True
+    if face_normals is not None and faces.shape == face_normals.shape:
+        use_face_normals = True
+
+    def interp_func_standard(u, v, v0, v1, v2):
+        return u * v0 + v * v1 + (1 - u - v) * v2
+
+    def interp_func_basis(u, v, v0, v1, v2):
+        return u * (v1 - v0) + v * (v2 - v0) + v0
+
+    interp_func = interp_func_basis
+    if standard_barycentric:
+        interp_func = interp_func_standard
+
     # [B, F]
     indices = np.argsort(t, axis=-1)
     results = []
@@ -77,23 +96,47 @@ def intersect(origin,  # [B, 3]
         if n < 1:
             results.append(None)
             continue
-        t_ = t[i][indices[i]][:n]
-        u_ = u[i][indices[i]][:n]
-        v_ = v[i][indices[i]][:n]
-        fid = indices[i][:n]
 
-        idx = np.argmin(t_)
+        result_added = False
+        for j in range(n):
+            # Get the closest point
+            t_ = t[i][indices[i]][j]
+            u_ = u[i][indices[i]][j]
+            v_ = v[i][indices[i]][j]
+            fid = indices[i][j]
 
-        if standard_barycentric:
-            # Convert from edge vector to triangle area ratio
-            w_ = 1 - u_ - v_
-            v_ = u_
-            u_ = w_
+            if standard_barycentric:
+                # Convert from edge basis vectors to triangle area ratios
+                # Original: u * (v1 - v0) + v * (v2 - v0) + v0
+                # Converted: u * v0 + v * v1 + (1 - u - v) * v2
+                w_ = 1 - u_ - v_
+                v_ = u_
+                u_ = w_
 
-        pos = org_origin[i] + org_ray[i] * t_[idx]
-        result = {'t': t_[idx], 'u': u_[idx], 'v': v_[
-            idx], 'fid': int(fid[idx]), 'pos': pos.tolist()}
-        results.append(result)
+            # Check culling
+            if use_face_normals:
+                fn = face_normals[fid]
+                if np.arccos(ray[i].dot(fn)) > cull_th:
+                    continue
+            if use_vert_normals:
+                vn = interp_func(
+                    u_, v_,
+                    vert_normals[fid], vert_normals[fid], vert_normals[fid])
+                if np.arccos(ray[i].dot(vn)) > cull_th:
+                    continue
+
+            pos = org_origin[i] + org_ray[i] * t_
+            # assert(
+            #    (np.abs(interp_func(u_, v_, v0[fid], v1[fid], v2[fid]) - pos)
+            #     < 1e-4).all())
+
+            result = {'t': t_, 'u': u_, 'v': v_,
+                      'fid': int(fid), 'pos': pos.tolist()}
+            results.append(result)
+            result_added = True
+            break
+        if not result_added:
+            results.append(None)
 
     return results, (t, u, v, indices, N)
 
@@ -204,92 +247,3 @@ def projectLandmarksToMesh(verts, faces, pos, fx, fy, cx, cy, c2w_R, c2w_t):
     origin = origin[None, ].repeat(len(cam_ray), axis=0)
     results = intersectMesh(origin, wld_ray, verts, faces)
     return results
-
-
-def _make_ply_txt(vertices, faces, color=[], normal=[]):
-    header_lines = ["ply", "format ascii 1.0",
-                    "element vertex " + str(len(vertices)),
-                    "property float x", "property float y", "property float z"]
-    has_normal = len(vertices) == len(normal)
-    has_color = len(vertices) == len(color)
-    if has_normal:
-        header_lines += ["property float nx",
-                         "property float ny", "property float nz"]
-    if has_color:
-        header_lines += ["property uchar red", "property uchar green",
-                         "property uchar blue", "property uchar alpha"]
-    header_lines += ["element face " + str(len(faces)),
-                     "property list uchar int vertex_indices", "end_header"]
-    header = "\n".join(header_lines) + "\n"
-
-    data_lines = []
-    for i in range(len(vertices)):
-        line = [vertices[i][0], vertices[i][1], vertices[i][2]]
-        if has_normal:
-            line += [normal[i][0], normal[i][1], normal[i][2]]
-        if has_color:
-            line += [int(color[i][0]), int(color[i][1]), int(color[i][2]), 255]
-        line_txt = " ".join([str(x) for x in line])
-        data_lines.append(line_txt)
-    for f in faces:
-        line_txt = " ".join(['3'] + [str(int(x)) for x in f])
-        data_lines.append(line_txt)
-
-    data_txt = "\n".join(data_lines)
-
-    ply_txt = header + data_txt
-
-    return ply_txt
-
-
-def writeMeshAsPly(path, vertices, faces):
-    with open(path, 'w') as f:
-        txt = _make_ply_txt(vertices, faces)
-        f.write(txt)
-
-
-def main():
-    # Load mesh
-    # Decimated mesh
-    # mesh_path = './data/max-planck_10k.obj'
-    # Original mesh
-    mesh_path = './data/max-planck.obj'
-    mesh = trimesh.load(mesh_path)
-
-    # Load camera param
-    with open('./data/camera_param.json') as fp:
-        camera_param = json.load(fp)
-    K = camera_param['K']
-    fx = K[0][0]
-    fy = K[1][1]
-    cx = K[0][2]
-    cy = K[1][2]
-    w2c_R = np.array(camera_param['R_world2cv'])
-    w2c_t = np.array(camera_param['T_world2cv'])
-    c2w_R = w2c_R.T
-    c2w_t = -1 * c2w_R.dot(w2c_t)
-
-    # Load landmarks
-    landmarks = []
-    with open('./data/detected.txt') as fp:
-        for line in fp:
-            pos = np.array([float(x) for x in line.rstrip().split(',')])
-            landmarks.append(pos)
-
-    start = time.time()
-    projected_list, all_info = projectLandmarksToMesh(mesh.vertices,
-                                                      mesh.faces,
-                                                      np.asarray(landmarks),
-                                                      fx, fy, cx, cy,
-                                                      c2w_R, c2w_t)
-    elapsed_time = time.time() - start
-    print("elapsed_time:{0}".format(elapsed_time) + "[sec]")
-    with open('intersections.json', 'w') as fp:
-        json.dump(projected_list, fp, indent=4)
-
-    projected_pos_list = [x['pos'] for x in projected_list if x is not None]
-    writeMeshAsPly('projected.ply', projected_pos_list, [])
-
-
-if __name__ == '__main__':
-    main()
